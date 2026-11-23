@@ -22,7 +22,7 @@
         </h1>
         <p class="text-xs text-slate-400 mt-1">
           Vos marcás <strong class="text-slate-300">Comprometida</strong> o <strong class="text-slate-300">Adelanto</strong>; se sincroniza a Jira (labels) y resta capacidad.
-          <a class="text-indigo-300 underline" href="/">← v1 auto</a>
+          <a class="text-indigo-300 underline" href="https://main.d2ebvw4qesirqr.amplifyapp.com/">← v1 auto</a>
           ·
           <a class="text-indigo-300 underline" href="https://crediviva-images.s3.us-east-1.amazonaws.com/QA-Offset-Validator.html" target="_blank" rel="noopener">QA-Offset-Validator</a>
         </p>
@@ -31,8 +31,8 @@
         <button onclick="loadPdfExample()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-3 py-1.5 rounded border border-slate-700">
           <i class="fa-solid fa-file-lines mr-1"></i> Ejemplo PDF
         </button>
-        <button onclick="loadBoardActual()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded">
-          <i class="fa-solid fa-list-check mr-1"></i> Cargar board Jira
+        <button onclick="loadBoardActual()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded" title="Carga el backlog de ejemplo embebido (no llama a Jira)">
+          <i class="fa-solid fa-list-check mr-1"></i> Board ejemplo
         </button>
         <button onclick="openTeamModal()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded">
           <i class="fa-solid fa-users-gear mr-1"></i> Equipo desde Jira
@@ -576,14 +576,13 @@ function capacity() {
   };
 }
 
-/** Ordena por peso desc; empate → orden original de la lista. */
+/** v2: respeta el orden del board/import (sin reordenar por peso al marcar). */
 function sortedForCommit() {
-  return stories
-    .map((s, originalIndex) => ({ ...s, originalIndex, weight: priorityWeight(s.priority || 'media') }))
-    .sort((a, b) => {
-      if (b.weight !== a.weight) return b.weight - a.weight;
-      return a.originalIndex - b.originalIndex;
-    });
+  return stories.map((s, originalIndex) => ({
+    ...s,
+    originalIndex,
+    weight: priorityWeight(s.priority || 'media'),
+  }));
 }
 
 function planStories(commitDev, commitQa) {
@@ -1196,12 +1195,17 @@ function recalc() {
   barDevEl.style.background = utilDevOver ? '#e11d48' : '';
   barQaEl.style.background = utilQaOver ? '#e11d48' : '';
 
+  const demCommitDev = committedOnly.reduce((a, s) => a + (Number(s.dev) || 0), 0);
+  const demCommitQa = committedOnly.reduce((a, s) => a + (Number(s.qa) || 0), 0);
+  const demAdelDev = adelantoOnly.reduce((a, s) => a + (Number(s.dev) || 0), 0);
+  const demAdelQa = adelantoOnly.reduce((a, s) => a + (Number(s.qa) || 0), 0);
+  const splitNote = `Compromiso Dev ${Math.round(demCommitDev * 100) / 100} h · QA ${Math.round(demCommitQa * 100) / 100} h · Adelanto Dev ${Math.round(demAdelDev * 100) / 100} h · QA ${Math.round(demAdelQa * 100) / 100} h`;
   if (utilDevOver || utilQaOver) {
     const overDev = utilDevOver ? demandDev - c.commitDev : 0;
     const overQa = utilQaOver ? demandQa - c.commitQa : 0;
-    setText('utilNote', `⚠ La demanda sobrepasa la capacidad comprometida — Dev +${Math.round(overDev * 100) / 100} h · QA +${Math.round(overQa * 100) / 100} h`);
+    setText('utilNote', `⚠ Demanda (compromiso+adelanto) sobrepasa capacidad — Dev +${Math.round(overDev * 100) / 100} h · QA +${Math.round(overQa * 100) / 100} h · ${splitNote}`);
   } else {
-    setText('utilNote', `No utilizada — Dev ${(100 - utilDev).toFixed(1)}% · QA ${(100 - utilQa).toFixed(1)}%`);
+    setText('utilNote', `Libre — Dev ${(100 - utilDev).toFixed(1)}% · QA ${(100 - utilQa).toFixed(1)}% · ${splitNote}`);
   }
 
   scheduleSave();
@@ -1303,7 +1307,9 @@ async function importStoriesFromJira() {
     if (!devPeople.length || !qaPeople.length) defaultPeople();
     recalc();
     if (activeSessionId) saveNow();
-    setSessionStatus(`Importadas ${list.length} historias · ${label.trim()}`);
+    const nC = stories.filter(x => x.committed).length;
+    const nA = stories.filter(x => x.adelanto).length;
+    setSessionStatus(`Importadas ${list.length} · ${nC} comprometidas · ${nA} adelantos · ${label.trim()}`);
   } catch (e) {
     alert('Error al importar de Jira: ' + e.message);
   }
@@ -1347,6 +1353,7 @@ function setStoryFlag(i, flag, checked) {
   s.flagsDirty = true;
   scheduleJiraFlagsSave(i);
   recalc();
+  if (activeSessionId) saveNow();
 }
 
 let jiraFlagsTimer = null;
@@ -1385,9 +1392,10 @@ async function flushJiraFlagsSave() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
       });
+      if (res.status === 401) throw new Error('No autenticado — entrá con Atlassian');
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))).error) || res.statusText);
-      const s = byId.get(item.key);
-      if (s) s.flagsDirty = false;
+      const st = byId.get(item.key);
+      if (st) st.flagsDirty = false;
       ok++;
     } catch (e) {
       console.error('[jira-flags] fallo al guardar', item.key, e.message);
@@ -1428,6 +1436,7 @@ async function flushJiraHoursSave() {
     try {
       const res = await fetch("/api/jira/story-hours", {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
       });
@@ -1465,8 +1474,8 @@ function csv(v) {
 
 /* — Sesiones (autoguardado local) — */
 
-const SESSIONS_KEY = 'scp_sessions';
-const ACTIVE_KEY = 'scp_active_session';
+const SESSIONS_KEY = 'scp_v2_sessions';
+const ACTIVE_KEY = 'scp_v2_active_session';
 let activeSessionId = null;
 let sessionSuppress = false;
 let AUTH_USER = null;     // {accountId, displayName, email, cloudId} del usuario Atlassian
@@ -1550,7 +1559,7 @@ function renderAuthBadge() {
   if (!el) return;
   if (AUTH_MODE === 'authed' && AUTH_USER) {
     el.innerHTML = `<i class="fa-brands fa-jira text-white/80"></i> ${escapeHtml(AUTH_USER.displayName || AUTH_USER.email || 'Usuario')}`
-      + `<a href="https://sprint.kubbesa.net/auth/logout" title="Cerrar sesión" class="ml-2 text-rose-300/90 hover:text-rose-200 text-[11px]"><i class="fa-solid fa-right-from-bracket"></i> Salir</a>`;
+      + `<a href="/auth/logout" title="Cerrar sesión" class="ml-2 text-rose-300/90 hover:text-rose-200 text-[11px]"><i class="fa-solid fa-right-from-bracket"></i> Salir</a>`;
     el.classList.remove('hidden');
   } else {
     el.classList.add('hidden');
@@ -1560,7 +1569,7 @@ function renderAuthBadge() {
 /* Devuelve 'authed' (usuario válido), 'required' (hay OAuth pero no logueado) o 'local' (proxy sin /auth/*) */
 async function authMe() {
   try {
-    const res = await fetch('https://sprint.kubbesa.net/auth/me', { credentials: 'include' });
+    const res = await fetch('/auth/me', { credentials: 'include' });
     if (res.status === 401) { AUTH_MODE = 'required'; AUTH_USER = null; renderAuthBadge(); return AUTH_MODE; }
     if (!res.ok) { AUTH_MODE = 'local'; AUTH_USER = null; renderAuthBadge(); return AUTH_MODE; }
     const u = await res.json();
@@ -1858,7 +1867,7 @@ function deleteSession() {
       <i class="fa-brands fa-jira text-4xl text-blue-600 mb-3 inline-block"></i>
       <h2 class="text-base font-bold text-slate-800 mb-1">Sprint Capacity Planner</h2>
       <p class="text-sm text-slate-500 mb-5">Inicia sesión con tu cuenta de Atlassian para planificar con tu equipo.</p>
-      <a href="https://sprint.kubbesa.net/auth/login" class="inline-block w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm py-2.5 rounded-lg">Entrar con Atlassian</a>
+      <a href="/auth/login" class="inline-block w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm py-2.5 rounded-lg">Entrar con Atlassian</a>
     </div>
   </div>
 </body>
