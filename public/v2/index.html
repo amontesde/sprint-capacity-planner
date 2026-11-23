@@ -531,7 +531,8 @@ let committedStoriesCache = [];
 let adelantoStoriesCache = [];
 
 function n(id) {
-  return Number(document.getElementById(id).value) || 0;
+  const el = document.getElementById(id);
+  return el ? (Number(el.value) || 0) : 0;
 }
 
 function priorityWeight(p) {
@@ -782,7 +783,10 @@ function addPersonManual() {
   document.getElementById('addPersonModal').classList.remove('hidden');
 }
 
+let teamModalInFlight = false;
 async function openTeamModal() {
+  if (teamModalInFlight) return;
+  teamModalInFlight = true;
   try {
     const members = await fetchJiraMembers();
     const vis = visibleMembers();
@@ -804,6 +808,8 @@ async function openTeamModal() {
   } catch (e) {
     alert('No se pudo cargar el equipo desde Jira.\n' + (e.message || e) +
       '\n\nRevisa que el proxy esté corriendo: node proxy.mjs');
+  } finally {
+    teamModalInFlight = false;
   }
 }
 
@@ -882,6 +888,7 @@ function renderStories(planned) {
       <td class="py-2 px-3 text-center align-middle">
         <label class="inline-flex flex-col items-center gap-1 cursor-pointer">
           <input type="checkbox" ${s.committed ? 'checked' : ''} onchange="setStoryFlag(${oi},'committed',this.checked)"
+            aria-label="Comprometida ${escapeAttr(s.id)}"
             class="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
           <span class="text-[10px] font-medium ${s.committed ? 'text-emerald-700' : 'text-slate-400'}">${s.committed ? 'Sí' : '—'}</span>
         </label>
@@ -889,6 +896,7 @@ function renderStories(planned) {
       <td class="py-2 px-3 text-center align-middle">
         <label class="inline-flex flex-col items-center gap-1 cursor-pointer">
           <input type="checkbox" ${s.adelanto ? 'checked' : ''} onchange="setStoryFlag(${oi},'adelanto',this.checked)"
+            aria-label="Adelanto ${escapeAttr(s.id)}"
             class="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500" />
           <span class="text-[10px] font-medium ${s.adelanto ? 'text-amber-700' : 'text-slate-400'}">${s.adelanto ? 'Sí' : '—'}</span>
         </label>
@@ -1303,13 +1311,18 @@ async function loadJiraSprintSelect() {
   return jiraSprintsCache;
 }
 
+let importJiraInFlight = false;
 async function importStoriesFromJira() {
+  if (importJiraInFlight) return;
   const sel = document.getElementById('jiraSprintSelect');
   const val = sel ? sel.value : '';
   if (!val) return alert('Selecciona un sprint de Jira primero.');
   const labelEl = sel.selectedOptions && sel.selectedOptions[0];
   const label = labelEl ? labelEl.textContent : val;
   if (stories.length && !confirm(`Esto reemplaza las ${stories.length} historia(s) actuales por las historias abiertas de ${label.trim()}. ¿Continuar?`)) return;
+  importJiraInFlight = true;
+  const btn = document.querySelector('button[onclick="importStoriesFromJira()"]');
+  if (btn) { btn.disabled = true; btn.classList.add('opacity-60'); }
   try {
     const res = await fetch(`/api/jira/stories?sprint=${encodeURIComponent(val)}`, { credentials: "include" });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
@@ -1329,6 +1342,10 @@ async function importStoriesFromJira() {
   } catch (e) {
     if (/401|No autenticado|autentic/i.test(String(e.message||''))) showLoginOverlay(true);
     alert('Error al importar de Jira: ' + e.message);
+  } finally {
+    importJiraInFlight = false;
+    const btn = document.querySelector('button[onclick="importStoriesFromJira()"]');
+    if (btn) { btn.disabled = false; btn.classList.remove('opacity-60'); }
   }
 }
 
@@ -1531,7 +1548,8 @@ function exportCsv() {
   const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'sprint-capacity-plan.csv';
+  const title = ((document.getElementById('sessionTitle') || {}).value || 'sprint').trim().replace(/[^\w\-]+/g, '_').slice(0, 40);
+  a.download = (title || 'sprint') + '-capacity-plan.csv';
   a.click();
 }
 
@@ -1569,7 +1587,7 @@ function renderSessionSelect() {
 }
 
 function collectSessionData() {
-  const read = id => document.getElementById(id).value;
+  const read = id => { const el = document.getElementById(id); return el ? el.value : ''; };
   const people = list => list.map(p => ({
     name: p.name,
     accountId: p.accountId || null,
@@ -1951,6 +1969,7 @@ function deleteSession() {
       <h2 class="text-base font-bold text-slate-800 mb-1">Sprint Capacity Planner v2</h2>
       <p class="text-sm text-slate-500 mb-5">Iniciá sesión con Atlassian para importar el sprint y escribir labels en Jira.</p>
       <a href="/auth/login?next=/v2/" class="inline-block w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm py-2.5 rounded-lg">Entrar con Atlassian</a>
+      <button type="button" onclick="showLoginOverlay(false)" class="mt-3 w-full text-xs text-slate-500 hover:text-slate-700 underline">Continuar sin Jira (solo local)</button>
     </div>
   </div>
 </body>
