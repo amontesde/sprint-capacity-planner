@@ -21,6 +21,12 @@ applications:
         - source: /api/<*>
           target: https://9smw7p8nwh.execute-api.us-east-1.amazonaws.com/prod/api/$1
           status: 200
+        - source: /v2
+          target: /v2/index.html
+          status: 200
+        - source: /v2/
+          target: /v2/index.html
+          status: 200
         # SPA fallback
         - source: /<*>
           target: /index.html

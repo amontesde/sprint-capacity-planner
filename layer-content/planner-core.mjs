@@ -7,10 +7,13 @@ const CARRYOVER_STATUSES = new Set([
   'En curso', 'Testing OK', 'Ready for Prod', 'STG', 'Dev', 'Desarrollo',
 ]);
 
-const JIRA_STORY_FIELDS = ['summary', 'status', 'priority', 'assignee', 'issuetype', 'resolution', 'customfield_10195', 'customfield_10196'];
+const JIRA_STORY_FIELDS = ['summary', 'status', 'priority', 'assignee', 'issuetype', 'resolution', 'labels', 'customfield_10195', 'customfield_10196'];
 
 export const STORY_DEV_FIELD = 'customfield_10195';
 export const STORY_QA_FIELD = 'customfield_10196';
+/** Labels en Jira para marcar alcance del sprint (v2 manual). */
+export const LABEL_COMMITTED = 'comprometida';
+export const LABEL_ADELANTO = 'adelanto';
 
 const DEV_ROLES = /dev(eloper)?|desarrollo|ingenier/i;
 const QA_ROLES = /qa|test|calidad|asegur/i;
@@ -208,12 +211,18 @@ export function createJiraApi({ baseUrl, headers }) {
       if (!type || JIRA_IMPORT_EXCLUDE.has(type)) continue;
       if (f.resolution && f.resolution.name) continue;
       const status = (f.status && f.status.name) || '';
+      const labels = Array.isArray(f.labels) ? f.labels : [];
+      const committed = labels.includes(LABEL_COMMITTED);
+      const adelanto = !committed && labels.includes(LABEL_ADELANTO);
       stories.push({
         id: it.key,
         title: f.summary || it.key,
         priority: jiraPriority(f.priority && f.priority.name),
         status,
         carryOver: CARRYOVER_STATUSES.has(status),
+        committed,
+        adelanto,
+        labels,
         dev: parseHours(f.customfield_10195),
         qa: parseHours(f.customfield_10196),
         forcedDev: 'auto',
@@ -244,5 +253,24 @@ export function createJiraApi({ baseUrl, headers }) {
     throw new Error(`Jira ${r.status} ${r.statusText}: ${errText.slice(0, 300)}`);
   }
 
-  return { raw, jiraJson, jiraMembers, teamMembers, jiraSprints, jiraSearch, jiraStories, updateStoryHours };
+  /**
+   * Marca Comprometida / Adelanto en Jira vía labels (mutuamente excluyentes).
+   * committed=true → label comprometida; adelanto=true → label adelanto; ambos false → quita ambas.
+   */
+  async function updateStoryFlags(key, { committed = false, adelanto = false } = {}) {
+    const wantCommitted = !!committed;
+    const wantAdelanto = !!adelanto && !wantCommitted;
+    const ops = [
+      wantCommitted ? { add: LABEL_COMMITTED } : { remove: LABEL_COMMITTED },
+      wantAdelanto ? { add: LABEL_ADELANTO } : { remove: LABEL_ADELANTO },
+    ];
+    const r = await raw(`/rest/api/3/issue/${encodeURIComponent(key)}`, {
+      method: 'PUT',
+      body: { update: { labels: ops } },
+    });
+    if (!r.ok) throw new Error(`Jira ${r.status} ${r.statusText}: ${(await r.text()).slice(0, 300)}`);
+    return { committed: wantCommitted, adelanto: wantAdelanto, labels: ops };
+  }
+
+  return { raw, jiraJson, jiraMembers, teamMembers, jiraSprints, jiraSearch, jiraStories, updateStoryHours, updateStoryFlags };
 }

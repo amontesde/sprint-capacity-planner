@@ -107,6 +107,16 @@ const server = http.createServer(async (req, res) => {
     const body = await readBody(req);
     return sendJson(res, 200, { ok: true, key: body.key, fields: {}, note: 'Mock: horas aceptadas' });
   }
+  if (p === '/api/jira/story-flags' && req.method === 'POST') {
+    const body = await readBody(req);
+    return sendJson(res, 200, {
+      ok: true,
+      key: body.key,
+      committed: !!body.committed,
+      adelanto: !!body.adelanto && !body.committed,
+      note: 'Mock: flags aceptados',
+    });
+  }
   if (p.startsWith('/auth/') || p === '/api/planner/sessions') {
     const body = ['POST', 'DELETE'].includes(req.method) ? await readBody(req) : null;
     const r = await handler(toApiGwEvent(req, url, body));

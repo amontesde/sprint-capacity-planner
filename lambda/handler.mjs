@@ -483,6 +483,18 @@ async function route(event) {
       return json(200, { ok: true, key, ...result });
     });
   }
+  if (path === '/api/jira/story-flags' && method === 'POST') {
+    return withJira(event, async jira => {
+      const body = parseBody(event);
+      const key = String(body.key || '').trim();
+      if (!/^[A-Za-z]+-\d+$/.test(key)) throw Object.assign(new Error('Falta un key Jira válido (p.ej. SCRUM-123)'), { status: 400 });
+      const result = await jira.updateStoryFlags(key, {
+        committed: !!body.committed,
+        adelanto: !!body.adelanto,
+      });
+      return json(200, { ok: true, key, ...result });
+    });
+  }
 
   throw Object.assign(new Error(`No route: ${method} ${path}`), { status: 404 });
 }

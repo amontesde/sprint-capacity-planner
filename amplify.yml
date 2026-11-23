@@ -30,6 +30,12 @@ frontend:
     - source: /api/planner/<*>
       target: https://9smw7p8nwh.execute-api.us-east-1.amazonaws.com/prod/api/planner/$1
       status: 200
+    - source: /v2
+      target: /v2/index.html
+      status: 200
+    - source: /v2/
+      target: /v2/index.html
+      status: 200
     - source: /<*>
       target: /index.html
       status: 404

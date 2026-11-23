@@ -45,11 +45,12 @@ sam deploy \
 
 echo "==> Subir frontend"
 aws s3 cp index.html "s3://${BUCKET}/" --profile "$PROFILE"
+aws s3 cp public/v2/index.html "s3://${BUCKET}/v2/index.html" --profile "$PROFILE"
 
 echo "==> Invalidar cache de CloudFront"
 CF_DOMAIN="$(aws cloudformation describe-stacks --stack-name "$STACK" --region "$REGION" --profile "$PROFILE" --query 'Stacks[0].Outputs[?OutputKey==`CloudFrontDomain`].OutputValue' --output text)"
 DIST_ID="$(aws cloudfront list-distributions --profile "$PROFILE" --query "DistributionList.Items[?DomainName==\`${CF_DOMAIN}\`].Id" --output text)"
-aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/index.html" "/" --profile "$PROFILE" >/dev/null
+aws cloudfront create-invalidation --distribution-id "$DIST_ID" --paths "/index.html" "/" "/v2" "/v2/" "/v2/index.html" --profile "$PROFILE" >/dev/null
 
 echo "==> Smoke test en https://${DOMAIN}"
 HDR="https://${DOMAIN}"

@@ -172,6 +172,23 @@ const server = http.createServer(async (req, res) => {
     } catch (e) { console.error('[proxy] Error:', e.message); sendJson(res, 502, { error: e.message }); }
     return;
   }
+  if (url.pathname === '/api/jira/story-flags' && req.method === 'POST') {
+    const cfg = checkConfig();
+    if (!cfg.ok) return sendJson(res, 500, { error: 'Faltan credenciales/baseUrl en config.json' });
+    let body;
+    try { body = await readBody(req); }
+    catch (e) { return sendJson(res, 400, { error: 'Body JSON inválido: ' + e.message }); }
+    const key = String((body && body.key) || '').trim();
+    if (!/^[A-Za-z]+-\d+$/.test(key)) return sendJson(res, 400, { error: 'Falta un key Jira válido (p.ej. SCRUM-123)' });
+    try {
+      const result = await jira.updateStoryFlags(key, {
+        committed: !!(body && body.committed),
+        adelanto: !!(body && body.adelanto),
+      });
+      sendJson(res, 200, { ok: true, key, ...result });
+    } catch (e) { console.error('[proxy] Error:', e.message); sendJson(res, 502, { error: e.message }); }
+    return;
+  }
   serveStatic(req, res);
 });
 
