@@ -294,7 +294,7 @@
           </div>
           <div>
             <div class="flex items-center justify-between gap-2 mb-2">
-              <p class="text-sm"><span class="text-slate-500">Fuera:</span> <span id="outCount" class="font-bold text-rose-700"></span></p>
+              <p class="text-sm"><span class="text-slate-500">Sin marcar:</span> <span id="outCount" class="font-bold text-rose-700"></span></p>
               <div class="relative">
                 <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none"></i>
                 <input id="outFilter" type="text" placeholder="Buscar…" oninput="renderOutList()"
@@ -1056,7 +1056,7 @@ function renderTimeline(planned) {
   }
 }
 
-function setText(id, v) { document.getElementById(id).textContent = v; }
+function setText(id, v) { const el = document.getElementById(id); if (el) el.textContent = v; }
 
 function renderCommittedList() {
   const input = document.getElementById('committedFilter');
@@ -1119,7 +1119,7 @@ function renderOutList() {
   if (countEl) countEl.textContent = `${outStoriesCache.length}`;
   if (!ul) return;
   if (!outStoriesCache.length) {
-    ul.innerHTML = '<li class="px-3 py-2 text-xs text-slate-400">Sin historias fuera del sprint</li>';
+    ul.innerHTML = '<li class="px-3 py-2 text-xs text-slate-400">Sin historias sin marcar</li>';
     return;
   }
   if (!matches.length) {
@@ -1174,7 +1174,7 @@ function recalc() {
   const outM = outStories.filter(s => s.priority === 'media').length;
   const outB = outStories.filter(s => s.priority === 'baja').length;
   setText('outByPriority', outStories.length
-    ? `Fuera por prioridad → Alta: ${outA} · Media: ${outM} · Baja: ${outB}`
+    ? `Sin marcar por prioridad → Alta: ${outA} · Media: ${outM} · Baja: ${outB}`
     : '');
 
   const demandDev = inStories.reduce((a, s) => a + (Number(s.dev) || 0), 0);
@@ -1182,6 +1182,7 @@ function recalc() {
 
   const utilSpan = (id, value, over) => {
     const el = document.getElementById(id);
+    if (!el) return;
     el.textContent = value;
     el.style.color = over ? '#be123c' : '#0f172a';
   };
@@ -1250,13 +1251,13 @@ function defaultPeople() {
 }
 
 function loadPdfExample() {
-  stories = PDF_EXAMPLE.map(s => ({ ...s }));
+  stories = PDF_EXAMPLE.map(s => ({ ...s, committed: !!s.committed, adelanto: !!s.adelanto && !s.committed }));
   defaultPeople();
   recalc();
 }
 
 function loadCarryOver() {
-  stories = BOARD_ACTUAL.filter(s => s.carryOver).map(s => ({ ...s }));
+  stories = BOARD_ACTUAL.filter(s => s.carryOver).map(s => ({ ...s, committed: false, adelanto: false }));
   if (!devPeople.length || !qaPeople.length) defaultPeople();
   document.getElementById('opsReservePct').value = '15';
   document.getElementById('ciReservePct').value = '15';
@@ -1267,7 +1268,7 @@ function loadCarryOver() {
 const JIRA_SITE = 'https://team-crediviva.atlassian.net';
 
 async function loadBoardActual() {
-  stories = BOARD_ACTUAL.map(s => ({ ...s }));
+  stories = BOARD_ACTUAL.map(s => ({ ...s, committed: false, adelanto: false }));
   if (!devPeople.length || !qaPeople.length) defaultPeople();
   document.getElementById('opsReservePct').value = '15';
   document.getElementById('ciReservePct').value = '15';
@@ -1399,6 +1400,11 @@ function scheduleJiraFlagsSave(i) {
   if (!s || !isJiraKey(s.id)) return;
   if (!s.flagsDirty) return;
   pendingJiraFlags.add(String(s.id).trim());
+  scheduleJiraFlagsSaveFromPending();
+}
+
+function scheduleJiraFlagsSaveFromPending() {
+  if (!pendingJiraFlags.size) return;
   if (jiraFlagsTimer) clearTimeout(jiraFlagsTimer);
   jiraFlagsTimer = setTimeout(flushJiraFlagsSave, 500);
 }
@@ -1430,13 +1436,22 @@ async function flushJiraFlagsSave() {
       if (res.status === 401) { showLoginOverlay(true); throw new Error('No autenticado — entrá con Atlassian'); }
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))).error) || res.statusText);
       const st = byId.get(item.key);
-      if (st) st.flagsDirty = false;
+      if (st) {
+        // Si el usuario cambió otra vez mientras volaba el request, no borrar dirty.
+        if (!!st.committed === !!item.committed && !!st.adelanto === !!item.adelanto) {
+          st.flagsDirty = false;
+        } else {
+          st.flagsDirty = true;
+          pendingJiraFlags.add(item.key);
+        }
+      }
       ok++;
     } catch (e) {
       console.error('[jira-flags] fallo al guardar', item.key, e.message);
     }
   }
   setJiraSaveState(ok === payloads.length ? 'ok' : 'fail', { kind: 'flags', ok, fail: payloads.length - ok, total: payloads.length });
+  if (pendingJiraFlags.size) scheduleJiraFlagsSaveFromPending();
 }
 
 function scheduleJiraHoursSave(i) {
@@ -1479,8 +1494,16 @@ async function flushJiraHoursSave() {
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))).error) || res.statusText);
       const st = byId.get(item.key);
       if (st) {
-        if (item.dev !== null) st.devDirty = false;
-        if (item.qa !== null) st.qaDirty = false;
+        if (item.dev !== null) {
+          const cur = st.dev == null || st.dev === '' ? '' : Number(st.dev);
+          if (cur === item.dev || (cur === '' && item.dev === '')) st.devDirty = false;
+          else { st.devDirty = true; pendingJiraHours.add(item.key); }
+        }
+        if (item.qa !== null) {
+          const cur = st.qa == null || st.qa === '' ? '' : Number(st.qa);
+          if (cur === item.qa || (cur === '' && item.qa === '')) st.qaDirty = false;
+          else { st.qaDirty = true; pendingJiraHours.add(item.key); }
+        }
       }
       ok++;
     } catch (e) {
@@ -1488,6 +1511,10 @@ async function flushJiraHoursSave() {
     }
   }
   setJiraSaveState(ok === payloads.length ? 'ok' : 'fail', { kind: 'hours', ok, fail: payloads.length - ok, total: payloads.length });
+  if (pendingJiraHours.size) {
+    if (jiraHoursTimer) clearTimeout(jiraHoursTimer);
+    jiraHoursTimer = setTimeout(flushJiraHoursSave, 500);
+  }
 }
 
 function exportCsv() {
@@ -1840,6 +1867,12 @@ function deleteSession() {
     document.getElementById('sessionTitle').value = 'Sprint 1';
     setSessionStatus('Guardado');
   }
+  window.addEventListener('beforeunload', (ev) => {
+    const dirty = stories.some(s => s.flagsDirty || s.devDirty || s.qaDirty) || pendingJiraFlags.size || pendingJiraHours.size;
+    if (!dirty) return;
+    ev.preventDefault();
+    ev.returnValue = '';
+  });
   // v2: auth primero (sprints/Jira necesitan cookie). Sesiones solo locales (scp_v2_*),
   // no compartidas con v1 — si no, v1 pisa committed/adelanto al guardar.
   if (location.hostname.endsWith('amplifyapp.com')) {
