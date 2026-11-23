@@ -485,7 +485,7 @@ let addPersonRole = 'dev';
 
 async function fetchJiraMembers(force) {
   if (jiraMembersCache && !force) return jiraMembersCache;
-  const res = await fetch(`${PROXY_BASE}/api/jira/members`);
+  const res = await fetch("/api/jira/members", { credentials: "include" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || res.statusText);
@@ -1189,7 +1189,7 @@ function loadCarryOver() {
   recalc();
 }
 
-const PROXY_BASE = 'https://cctqr6dqrk.execute-api.us-east-1.amazonaws.com';
+// const PROXY_BASE removido - usamos paths relativos
 const JIRA_SITE = 'https://team-crediviva.atlassian.net';
 
 async function loadBoardActual() {
@@ -1211,7 +1211,7 @@ async function loadJiraSprintSelect() {
   if (!sel) return null;
   sel.innerHTML = '<option value="">Cargando sprints…</option>';
   try {
-    const res = await fetch(`${PROXY_BASE}/api/jira/sprints`);
+    const res = await fetch("/api/jira/sprints", { credentials: "include" });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
     const sprints = await res.json();
     jiraSprintsCache = sprints;
@@ -1236,7 +1236,7 @@ async function importStoriesFromJira() {
   const label = labelEl ? labelEl.textContent : val;
   if (stories.length && !confirm(`Esto reemplaza las ${stories.length} historia(s) actuales por las historias abiertas de ${label.trim()}. ¿Continuar?`)) return;
   try {
-    const res = await fetch(`${PROXY_BASE}/api/jira/stories?sprint=${encodeURIComponent(val)}`);
+    const res = await fetch(`/api/jira/stories?sprint=${encodeURIComponent(val)}`, { credentials: "include" });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
     const list = await res.json();
     if (!Array.isArray(list) || !list.length) { alert('No hay historias abiertas en ' + label.trim() + '.'); return; }
@@ -1305,7 +1305,7 @@ async function flushJiraHoursSave() {
   let ok = 0;
   for (const item of payloads) {
     try {
-      const res = await fetch(`${PROXY_BASE}/api/jira/story-hours`, {
+      const res = await fetch("/api/jira/story-hours", {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
@@ -1428,7 +1428,7 @@ function renderAuthBadge() {
   if (!el) return;
   if (AUTH_MODE === 'authed' && AUTH_USER) {
     el.innerHTML = `<i class="fa-brands fa-jira text-white/80"></i> ${escapeHtml(AUTH_USER.displayName || AUTH_USER.email || 'Usuario')}`
-      + `<a href="https://sprint.crediviva.com.pa/auth/logout" title="Cerrar sesión" class="ml-2 text-rose-300/90 hover:text-rose-200 text-[11px]"><i class="fa-solid fa-right-from-bracket"></i> Salir</a>`;
+      + `<a href="https://sprint.kubbesa.net/auth/logout" title="Cerrar sesión" class="ml-2 text-rose-300/90 hover:text-rose-200 text-[11px]"><i class="fa-solid fa-right-from-bracket"></i> Salir</a>`;
     el.classList.remove('hidden');
   } else {
     el.classList.add('hidden');
@@ -1438,7 +1438,7 @@ function renderAuthBadge() {
 /* Devuelve 'authed' (usuario válido), 'required' (hay OAuth pero no logueado) o 'local' (proxy sin /auth/*) */
 async function authMe() {
   try {
-    const res = await fetch('https://sprint.crediviva.com.pa/auth/me', { credentials: 'include' });
+    const res = await fetch('https://sprint.kubbesa.net/auth/me', { credentials: 'include' });
     if (res.status === 401) { AUTH_MODE = 'required'; AUTH_USER = null; renderAuthBadge(); return AUTH_MODE; }
     if (!res.ok) { AUTH_MODE = 'local'; AUTH_USER = null; renderAuthBadge(); return AUTH_MODE; }
     const u = await res.json();
@@ -1735,7 +1735,7 @@ function deleteSession() {
       <i class="fa-brands fa-jira text-4xl text-blue-600 mb-3 inline-block"></i>
       <h2 class="text-base font-bold text-slate-800 mb-1">Sprint Capacity Planner</h2>
       <p class="text-sm text-slate-500 mb-5">Inicia sesión con tu cuenta de Atlassian para planificar con tu equipo.</p>
-      <a href="https://sprint.crediviva.com.pa/auth/login" class="inline-block w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm py-2.5 rounded-lg">Entrar con Atlassian</a>
+      <a href="https://sprint.kubbesa.net/auth/login" class="inline-block w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm py-2.5 rounded-lg">Entrar con Atlassian</a>
     </div>
   </div>
 </body>

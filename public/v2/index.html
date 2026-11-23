@@ -22,9 +22,12 @@
         </h1>
         <p class="text-xs text-slate-400 mt-1">
           Vos marcás <strong class="text-slate-300">Comprometida</strong> o <strong class="text-slate-300">Adelanto</strong>; se sincroniza a Jira (labels) y resta capacidad.
-          <a class="text-indigo-300 underline" href="https://main.d2ebvw4qesirqr.amplifyapp.com/">← v1 auto</a>
+          <a class="text-indigo-300 underline" id="v1Link" href="https://sprint.kubbesa.net/">← v1 auto</a>
           ·
           <a class="text-indigo-300 underline" href="https://crediviva-images.s3.us-east-1.amazonaws.com/QA-Offset-Validator.html" target="_blank" rel="noopener">QA-Offset-Validator</a>
+        </p>
+        <p id="hostAuthHint" class="hidden text-[11px] text-amber-200/90 mt-1">
+          Login Jira funciona en <a class="underline font-semibold" href="https://sprint.kubbesa.net/v2/">sprint.kubbesa.net/v2/</a> (misma cookie OAuth).
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
@@ -590,7 +593,7 @@ function planStories(commitDev, commitQa) {
   let balQa = commitQa;
   const devLoad = devPeople.map(() => 0);
   const qaLoad = qaPeople.map(() => 0);
-  // v2: orden por peso, pero entra SOLO si marcaste Comprometida o Adelanto
+  // v2: entra SOLO si marcaste Comprometida o Adelanto (orden = board/import)
   const planned = sortedForCommit().map((s, i) => {
     const maxDev = balDev;
     const maxQa = balQa;
@@ -858,14 +861,14 @@ function renderStories(planned) {
           onchange="updateStory(${oi},'dev',this.value)"
           onblur="updateStory(${oi},'dev',this.value)"
           class="w-20 bg-white border border-slate-300 rounded px-2 py-1 text-sm font-bold" />
-        <div class="text-[10px] ${nDev > s.maxDev ? 'text-rose-500 font-bold' : 'text-slate-400'}">${nDev > s.maxDev ? '⚠ sobrepasa ' + (nDev - s.maxDev) + ' h' : 'disponible ' + s.maxDev + ' h'}</div>
+        <div class="text-[10px] ${!s.entra ? 'text-slate-400' : nDev > s.maxDev ? 'text-rose-500 font-bold' : 'text-slate-400'}">${!s.entra ? 'marcá para restar capacidad' : nDev > s.maxDev ? '⚠ sobrepasa ' + (nDev - s.maxDev) + ' h' : 'disponible ' + s.maxDev + ' h'}</div>
       </td>
       <td class="py-2 px-3 align-middle">
         <input type="number" min="0" step="0.5" value="${rawQa == null ? '' : rawQa}"
           onchange="updateStory(${oi},'qa',this.value)"
           onblur="updateStory(${oi},'qa',this.value)"
           class="w-20 bg-white border border-slate-300 rounded px-2 py-1 text-sm font-bold" />
-        <div class="text-[10px] ${nQa > s.maxQa ? 'text-rose-500 font-bold' : 'text-slate-400'}">${nQa > s.maxQa ? '⚠ sobrepasa ' + (nQa - s.maxQa) + ' h' : 'disponible ' + s.maxQa + ' h'}</div>
+        <div class="text-[10px] ${!s.entra ? 'text-slate-400' : nQa > s.maxQa ? 'text-rose-500 font-bold' : 'text-slate-400'}">${!s.entra ? 'marcá para restar capacidad' : nQa > s.maxQa ? '⚠ sobrepasa ' + (nQa - s.maxQa) + ' h' : 'disponible ' + s.maxQa + ' h'}</div>
       </td>
       <td class="py-2 px-3 align-middle">${resourceSelect(oi, 'forcedDev', forcedIndex(s, 'forcedDev'))}</td>
       <td class="py-2 px-3 align-middle">${resourceSelect(oi, 'forcedQa', forcedIndex(s, 'forcedQa'))}</td>
@@ -1328,12 +1331,16 @@ function setJiraSaveState(state, detail) {
   const el = document.getElementById('jiraSaveStatus');
   if (!el) return;
   clearTimeout(setJiraSaveState._t);
-  if (state === 'saving') el.textContent = '⏳ Guardando horas en Jira…';
+  const kind = (detail && detail.kind) || 'horas';
+  const label = kind === 'flags' ? 'labels' : 'horas';
+  if (state === 'saving') el.textContent = '⏳ Guardando ' + label + ' en Jira…';
   else if (state === 'ok') {
-    el.textContent = '✓ ' + (detail && detail.total > 1 ? detail.total + ' tickets guardados en Jira' : 'Horas guardadas en Jira');
+    el.textContent = '✓ ' + (detail && detail.total > 1
+      ? detail.total + ' tickets (' + label + ') en Jira'
+      : (kind === 'flags' ? 'Labels guardados en Jira' : 'Horas guardadas en Jira'));
     setJiraSaveState._t = setTimeout(() => { el.textContent = ''; }, 3000);
   } else if (state === 'fail') {
-    el.textContent = '⚠ ' + (detail ? detail.fail + ' de ' + detail.total : '') + ' no se pudieron guardar en Jira';
+    el.textContent = '⚠ ' + (detail ? detail.fail + ' de ' + detail.total : '') + ' no se pudieron guardar en Jira (' + label + ')';
     setJiraSaveState._t = setTimeout(() => { el.textContent = ''; }, 6000);
   } else {
     el.textContent = '';
@@ -1382,7 +1389,7 @@ async function flushJiraFlagsSave() {
     payloads.push({ key: id, committed: !!s.committed, adelanto: !!s.adelanto });
   }
   if (!payloads.length) return;
-  setJiraSaveState('saving');
+  setJiraSaveState('saving', { kind: 'flags' });
   let ok = 0;
   for (const item of payloads) {
     try {
@@ -1401,7 +1408,7 @@ async function flushJiraFlagsSave() {
       console.error('[jira-flags] fallo al guardar', item.key, e.message);
     }
   }
-  setJiraSaveState(ok === payloads.length ? 'ok' : 'fail', { ok, fail: payloads.length - ok, total: payloads.length });
+  setJiraSaveState(ok === payloads.length ? 'ok' : 'fail', { kind: 'flags', ok, fail: payloads.length - ok, total: payloads.length });
 }
 
 function scheduleJiraHoursSave(i) {
@@ -1430,7 +1437,7 @@ async function flushJiraHoursSave() {
     payloads.push({ key: id, dev, qa });
   }
   if (!payloads.length) return;
-  setJiraSaveState('saving');
+  setJiraSaveState('saving', { kind: 'hours' });
   let ok = 0;
   for (const item of payloads) {
     try {
@@ -1440,13 +1447,14 @@ async function flushJiraHoursSave() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
       });
+      if (res.status === 401) throw new Error('No autenticado — entrá con Atlassian');
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))).error) || res.statusText);
       ok++;
     } catch (e) {
       console.error('[jira-hours] fallo al guardar', item.key, e.message);
     }
   }
-  setJiraSaveState(ok === payloads.length ? 'ok' : 'fail', { ok, fail: payloads.length - ok, total: payloads.length });
+  setJiraSaveState(ok === payloads.length ? 'ok' : 'fail', { kind: 'hours', ok, fail: payloads.length - ok, total: payloads.length });
 }
 
 function exportCsv() {
@@ -1800,14 +1808,24 @@ function deleteSession() {
     document.getElementById('sessionTitle').value = 'Sprint 1';
     setSessionStatus('Guardado');
   }
-  loadJiraSprintSelect();
+  // v2: auth primero (sprints/Jira necesitan cookie). Sesiones solo locales (scp_v2_*),
+  // no compartidas con v1 — si no, v1 pisa committed/adelanto al guardar.
+  if (location.hostname.endsWith('amplifyapp.com')) {
+    const hint = document.getElementById('hostAuthHint');
+    if (hint) hint.classList.remove('hidden');
+  }
   const mode = await authMe();
   if (mode === 'required') {
     showLoginOverlay(true);
+    const loginA = document.querySelector('#loginOverlay a[href="/auth/login"]');
+    if (loginA && location.hostname.endsWith('amplifyapp.com')) {
+      loginA.setAttribute('href', 'https://sprint.kubbesa.net/v2/');
+      loginA.textContent = 'Abrir v2 en sprint.kubbesa.net (login Jira)';
+    }
   } else if (mode === 'authed') {
-    await fetchSharedSessions();
-    startSharedSync();
+    // Intencionalmente sin fetchSharedSessions/startSharedSync en v2.
   }
+  await loadJiraSprintSelect();
 })();
 </script>
 
@@ -1865,8 +1883,8 @@ function deleteSession() {
   <div id="loginOverlay" class="hidden fixed inset-0 z-[60] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
     <div class="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center">
       <i class="fa-brands fa-jira text-4xl text-blue-600 mb-3 inline-block"></i>
-      <h2 class="text-base font-bold text-slate-800 mb-1">Sprint Capacity Planner</h2>
-      <p class="text-sm text-slate-500 mb-5">Inicia sesión con tu cuenta de Atlassian para planificar con tu equipo.</p>
+      <h2 class="text-base font-bold text-slate-800 mb-1">Sprint Capacity Planner v2</h2>
+      <p class="text-sm text-slate-500 mb-5">Iniciá sesión con Atlassian para importar el sprint y escribir labels en Jira.</p>
       <a href="/auth/login" class="inline-block w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm py-2.5 rounded-lg">Entrar con Atlassian</a>
     </div>
   </div>
