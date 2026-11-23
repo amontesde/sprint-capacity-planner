@@ -645,10 +645,7 @@ function planStories(commitDev, commitQa) {
     if (!qaPeople.length) return;
     const fq = forcedIndex(p, 'forcedQa');
     let qr;
-    if (fq !== 'auto') {
-      qr = Number(fq);
-      if (!Number.isInteger(qr) || qr < 0 || qr >= qaPeople.length) qr = 0;
-    } else {
+    const pickBestQa = () => {
       let bestQ = 0;
       let bestF = Infinity;
       qaPeople.forEach((_, qi) => {
@@ -658,7 +655,13 @@ function planStories(commitDev, commitQa) {
           bestQ = qi;
         }
       });
-      qr = bestQ;
+      return bestQ;
+    };
+    if (fq !== 'auto') {
+      qr = Number(fq);
+      if (!Number.isInteger(qr) || qr < 0 || qr >= qaPeople.length) qr = pickBestQa();
+    } else {
+      qr = pickBestQa();
     }
     const start = Math.max(p.devFinish || 0, qaQueue[qr] || 0);
     const target = byOriginal.get(p.originalIndex);
@@ -677,6 +680,8 @@ function escapeAttr(s) {
 function renderPeople(role) {
   const list = role === 'dev' ? devPeople : qaPeople;
   const body = document.getElementById(role === 'dev' ? 'devPeopleBody' : 'qaPeopleBody');
+  const ae = document.activeElement;
+  const focusKey = ae && ae.getAttribute && ae.getAttribute('data-focus') || null;
   body.innerHTML = list.map((p, i) => {
     const auto = personHours({ ...p, hoursOverride: null });
     const hrs = personHours(p);
@@ -691,12 +696,14 @@ function renderPeople(role) {
         </td>
         <td class="py-1.5 px-2">
           <input type="number" min="0" step="0.5" value="${p.daysOff || 0}"
+            data-focus="${role}-off-${i}"
             onchange="updatePerson('${role}',${i},'daysOff',this.value)"
             onblur="updatePerson('${role}',${i},'daysOff',this.value)"
             class="w-20 bg-white border border-slate-300 rounded px-2 py-1 text-sm font-bold" />
         </td>
         <td class="py-1.5 px-2">
           <input type="number" min="0" step="0.5" value="${hrs}"
+            data-focus="${role}-hrs-${i}"
             onchange="updatePerson('${role}',${i},'hoursOverride',this.value)"
             onblur="updatePerson('${role}',${i},'hoursOverride',this.value)"
             class="w-20 bg-white border rounded px-2 py-1 text-sm font-bold ${overridden ? 'border-amber-400' : 'border-slate-300'}"
@@ -707,6 +714,10 @@ function renderPeople(role) {
         </td>
       </tr>`;
   }).join('') || `<tr><td colspan="4" class="py-3 px-2 text-xs text-slate-400">Sin personas</td></tr>`;
+  if (focusKey) {
+    const el = body.querySelector(`[data-focus="${CSS.escape(focusKey)}"]`);
+    if (el) el.focus({ preventScroll: true });
+  }
 }
 
 function updatePerson(role, i, key, value) {
@@ -1777,6 +1788,8 @@ function adoptSharedSessions(server) {
 }
 
 async function fetchSharedSessions() {
+  // v2: nunca adoptar sesiones del pool compartido de v1 (pisaría scp_v2_*).
+  return false;
   if (AUTH_MODE !== 'authed') return false;
   try {
     const res = await fetch('/api/planner/sessions', { credentials: 'include' });
