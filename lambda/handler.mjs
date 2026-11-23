@@ -31,6 +31,14 @@ const SESSION_MAX_AGE = 60 * 60 * 24 * 30;
 const STATE_MAX_AGE = 60 * 10;
 const SESSION_COOKIE = 'scp_session';
 const STATE_COOKIE = 'scp_state';
+const NEXT_COOKIE = 'scp_next';
+
+/** Solo paths relativos seguros (p.ej. / o /v2/). */
+function safeNextPath(raw) {
+  const next = String(raw || '/').slice(0, 200);
+  if (!next.startsWith('/') || next.startsWith('//') || next.includes('\\') || next.includes('\n')) return '/';
+  return next;
+}
 
 // ---- DynamoDB (disponible en el runtime Lambda; fallback en memoria para sam local) ---------
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
@@ -335,6 +343,7 @@ async function withJira(event, fn) {
 // ---- Auth flows -----------------------------------------------------------
 async function loginRoute(event) {
   const state = randomUUID().replace(/-/g, '');
+  const next = safeNextPath(queryString(event).next);
   const authorize = `${AUTH_URL}/authorize?${new URLSearchParams({
     audience: 'api.atlassian.com',
     client_id: CLIENT_ID,
@@ -344,7 +353,10 @@ async function loginRoute(event) {
     response_type: 'code',
     prompt: 'consent',
   })}`;
-  return redirect(authorize, [cookie(STATE_COOKIE, state, STATE_MAX_AGE)]);
+  return redirect(authorize, [
+    cookie(STATE_COOKIE, state, STATE_MAX_AGE),
+    cookie(NEXT_COOKIE, next, STATE_MAX_AGE),
+  ]);
 }
 
 async function callbackRoute(event) {
@@ -380,8 +392,10 @@ async function callbackRoute(event) {
   };
   await sessionPut(session);
   await personalPut(me.accountId || session.accountId); // registramos la cuenta cuyo token guardamos
-  return redirect(APP_ORIGIN + '/', [
+  const next = safeNextPath(cookies[NEXT_COOKIE]);
+  return redirect(APP_ORIGIN + next, [
     cookie(STATE_COOKIE, '', -1),
+    cookie(NEXT_COOKIE, '', -1),
     cookie(SESSION_COOKIE, sessionId, SESSION_MAX_AGE),
   ]);
 }
@@ -397,7 +411,8 @@ async function logoutRoute(event) {
   const cookies = parseCookies(event);
   const sid = cookies[SESSION_COOKIE];
   if (sid) await sessionDelete(sid);
-  return redirect(APP_ORIGIN + '/', [expireCookie(SESSION_COOKIE), expireCookie(STATE_COOKIE)]);
+  const next = safeNextPath(queryString(event).next);
+  return redirect(APP_ORIGIN + next, [expireCookie(SESSION_COOKIE), expireCookie(STATE_COOKIE), expireCookie(NEXT_COOKIE)]);
 }
 
 // ---- Routes -------------------------------------------------------------------

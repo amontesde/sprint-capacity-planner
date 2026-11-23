@@ -208,7 +208,7 @@
     <section class="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
       <div class="px-5 py-4 border-b border-slate-200 flex flex-wrap justify-between items-center gap-2 bg-slate-50">
         <h2 class="text-sm font-bold text-slate-700 uppercase tracking-wider">
-          <i class="fa-solid fa-table mr-1.5 text-indigo-600"></i> 4. Historias (se ordenan por peso al comprometer)
+          <i class="fa-solid fa-table mr-1.5 text-indigo-600"></i> 4. Historias (marcá Comprometida / Adelanto a mano)
         </h2>
         <div class="flex flex-wrap items-center gap-2">
           <label class="text-xs text-slate-500 flex items-center gap-1.5">
@@ -222,6 +222,9 @@
             <i class="fa-brands fa-jira mr-1"></i> Importar de Jira
           </button>
           <span id="jiraSaveStatus" class="text-xs text-slate-500 whitespace-nowrap"></span>
+          <button onclick="markCarryOverCommitted()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded font-medium" title="Marca como Comprometida todas las WIP/carry-over">
+            <i class="fa-solid fa-check-double mr-1"></i> WIP → Comprometidas
+          </button>
           <button onclick="addStory()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded font-medium">
             <i class="fa-solid fa-plus mr-1"></i> Añadir historia
           </button>
@@ -1314,6 +1317,7 @@ async function importStoriesFromJira() {
     const nA = stories.filter(x => x.adelanto).length;
     setSessionStatus(`Importadas ${list.length} · ${nC} comprometidas · ${nA} adelantos · ${label.trim()}`);
   } catch (e) {
+    if (/401|No autenticado|autentic/i.test(String(e.message||''))) showLoginOverlay(true);
     alert('Error al importar de Jira: ' + e.message);
   }
 }
@@ -1345,6 +1349,21 @@ function setJiraSaveState(state, detail) {
   } else {
     el.textContent = '';
   }
+}
+
+
+function markCarryOverCommitted() {
+  const idxs = stories.map((s, i) => i).filter(i => stories[i].carryOver && !stories[i].committed);
+  if (!idxs.length) { alert('No hay historias WIP sin marcar como comprometidas.'); return; }
+  if (!confirm(`Marcar ${idxs.length} WIP como Comprometida(s) y sincronizar a Jira?`)) return;
+  idxs.forEach(i => {
+    stories[i].committed = true;
+    stories[i].adelanto = false;
+    stories[i].flagsDirty = true;
+    scheduleJiraFlagsSave(i);
+  });
+  recalc();
+  if (activeSessionId) saveNow();
 }
 
 function setStoryFlag(i, flag, checked) {
@@ -1399,7 +1418,7 @@ async function flushJiraFlagsSave() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
       });
-      if (res.status === 401) throw new Error('No autenticado — entrá con Atlassian');
+      if (res.status === 401) { showLoginOverlay(true); throw new Error('No autenticado — entrá con Atlassian'); }
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))).error) || res.statusText);
       const st = byId.get(item.key);
       if (st) st.flagsDirty = false;
@@ -1447,7 +1466,7 @@ async function flushJiraHoursSave() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(item),
       });
-      if (res.status === 401) throw new Error('No autenticado — entrá con Atlassian');
+      if (res.status === 401) { showLoginOverlay(true); throw new Error('No autenticado — entrá con Atlassian'); }
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))).error) || res.statusText);
       ok++;
     } catch (e) {
@@ -1567,7 +1586,7 @@ function renderAuthBadge() {
   if (!el) return;
   if (AUTH_MODE === 'authed' && AUTH_USER) {
     el.innerHTML = `<i class="fa-brands fa-jira text-white/80"></i> ${escapeHtml(AUTH_USER.displayName || AUTH_USER.email || 'Usuario')}`
-      + `<a href="/auth/logout" title="Cerrar sesión" class="ml-2 text-rose-300/90 hover:text-rose-200 text-[11px]"><i class="fa-solid fa-right-from-bracket"></i> Salir</a>`;
+      + `<a href="/auth/logout?next=/v2/" title="Cerrar sesión" class="ml-2 text-rose-300/90 hover:text-rose-200 text-[11px]"><i class="fa-solid fa-right-from-bracket"></i> Salir</a>`;
     el.classList.remove('hidden');
   } else {
     el.classList.add('hidden');
@@ -1817,10 +1836,10 @@ function deleteSession() {
   const mode = await authMe();
   if (mode === 'required') {
     showLoginOverlay(true);
-    const loginA = document.querySelector('#loginOverlay a[href="/auth/login"]');
+    const loginA = document.querySelector('#loginOverlay a[href="/auth/login?next=/v2/"]');
     if (loginA && location.hostname.endsWith('amplifyapp.com')) {
-      loginA.setAttribute('href', 'https://sprint.kubbesa.net/v2/');
-      loginA.textContent = 'Abrir v2 en sprint.kubbesa.net (login Jira)';
+      loginA.setAttribute('href', 'https://sprint.kubbesa.net/auth/login?next=/v2/');
+      loginA.textContent = 'Entrar con Atlassian (vuelve a /v2/)';
     }
   } else if (mode === 'authed') {
     // Intencionalmente sin fetchSharedSessions/startSharedSync en v2.
@@ -1885,7 +1904,7 @@ function deleteSession() {
       <i class="fa-brands fa-jira text-4xl text-blue-600 mb-3 inline-block"></i>
       <h2 class="text-base font-bold text-slate-800 mb-1">Sprint Capacity Planner v2</h2>
       <p class="text-sm text-slate-500 mb-5">Iniciá sesión con Atlassian para importar el sprint y escribir labels en Jira.</p>
-      <a href="/auth/login" class="inline-block w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm py-2.5 rounded-lg">Entrar con Atlassian</a>
+      <a href="/auth/login?next=/v2/" class="inline-block w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm py-2.5 rounded-lg">Entrar con Atlassian</a>
     </div>
   </div>
 </body>
