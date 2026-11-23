@@ -613,9 +613,11 @@ function planStories(commitDev, commitQa) {
     let qaResource = -1;
     let devStart = 0, devFinish = 0, qaStart = 0, qaFinish = 0;
     if (entra) {
-      if (devLoad.length) {
+      if (dev > 0 && devLoad.length) {
         const fd = forcedIndex(s, 'forcedDev');
-        devResource = fd === 'auto' ? devLoad.indexOf(Math.min(...devLoad)) : Number(fd);
+        let di = fd === 'auto' ? devLoad.indexOf(Math.min(...devLoad)) : Number(fd);
+        if (!Number.isInteger(di) || di < 0 || di >= devLoad.length) di = devLoad.indexOf(Math.min(...devLoad));
+        devResource = di;
         devStart = devLoad[devResource];
         devFinish = Math.round((devStart + dev) * 100) / 100;
         devLoad[devResource] = devFinish;
@@ -636,15 +638,17 @@ function planStories(commitDev, commitQa) {
     .sort((a, b) => (a.devFinish - b.devFinish) || (a.originalIndex - b.originalIndex));
   const qaQueue = qaPeople.map(() => 0);
   committedWithQa.forEach(p => {
+    if (!qaPeople.length) return;
     const fq = forcedIndex(p, 'forcedQa');
     let qr;
     if (fq !== 'auto') {
       qr = Number(fq);
+      if (!Number.isInteger(qr) || qr < 0 || qr >= qaPeople.length) qr = 0;
     } else {
       let bestQ = 0;
       let bestF = Infinity;
       qaPeople.forEach((_, qi) => {
-        const fin = Math.max(p.devFinish, qaQueue[qi]) + p.qa;
+        const fin = Math.max(p.devFinish || 0, qaQueue[qi]) + p.qa;
         if (fin < bestF || (fin === bestF && qaQueue[qi] < qaQueue[bestQ])) {
           bestF = fin;
           bestQ = qi;
@@ -652,7 +656,7 @@ function planStories(commitDev, commitQa) {
       });
       qr = bestQ;
     }
-    const start = Math.max(p.devFinish, qaQueue[qr]);
+    const start = Math.max(p.devFinish || 0, qaQueue[qr] || 0);
     const target = byOriginal.get(p.originalIndex);
     target.qaResource = qr;
     target.qaStart = Math.round(start * 100) / 100;
@@ -663,7 +667,7 @@ function planStories(commitDev, commitQa) {
 }
 
 function escapeAttr(s) {
-  return String(s ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;');
 }
 
 function renderPeople(role) {
@@ -890,8 +894,8 @@ function renderStories(planned) {
         </label>
         <div class="text-[9px] mt-1 ${s.entra ? (s.committed ? 'text-emerald-600' : 'text-amber-600') : 'text-slate-400'}">${escapeAttr(s.reason)}</div>
       </td>
-      <td class="py-2 px-3 font-mono text-xs ${s.entra ? 'text-slate-700' : 'text-slate-400'}">${s.balDev}</td>
-      <td class="py-2 px-3 font-mono text-xs ${s.entra ? 'text-slate-700' : 'text-slate-400'}">${s.balQa}</td>
+      <td class="py-2 px-3 font-mono text-xs ${s.entra ? 'text-slate-700' : 'text-slate-400'}">${s.entra ? s.balDev : '—'}</td>
+      <td class="py-2 px-3 font-mono text-xs ${s.entra ? 'text-slate-700' : 'text-slate-400'}">${s.entra ? s.balQa : '—'}</td>
       <td class="py-2 px-3 text-center">
         <button onclick="removeStory(${oi})" class="text-slate-400 hover:text-rose-600"><i class="fa-solid fa-trash"></i></button>
       </td>
@@ -919,7 +923,12 @@ function updateStory(i, key, value) {
     stories[i][key] = next;
   } else {
     if (stories[i][key] === value) return;
+    const prevId = stories[i].id;
     stories[i][key] = value;
+    if (key === 'id' && (stories[i].committed || stories[i].adelanto) && isJiraKey(value) && String(prevId) !== String(value)) {
+      stories[i].flagsDirty = true;
+      scheduleJiraFlagsSave(i);
+    }
   }
   recalc();
 }
@@ -1468,6 +1477,11 @@ async function flushJiraHoursSave() {
       });
       if (res.status === 401) { showLoginOverlay(true); throw new Error('No autenticado — entrá con Atlassian'); }
       if (!res.ok) throw new Error(((await res.json().catch(() => ({}))).error) || res.statusText);
+      const st = byId.get(item.key);
+      if (st) {
+        if (item.dev !== null) st.devDirty = false;
+        if (item.qa !== null) st.qaDirty = false;
+      }
       ok++;
     } catch (e) {
       console.error('[jira-hours] fallo al guardar', item.key, e.message);
@@ -1672,9 +1686,8 @@ async function fetchSharedSessions() {
 }
 
 function schedulePush() {
-  if (AUTH_MODE !== 'authed') return;
-  clearTimeout(sharedPushTimer);
-  sharedPushTimer = setTimeout(pushSessions, 800);
+  // v2: no subir scp_v2_* al pool compartido de v1 (lo pisaría).
+  return;
 }
 
 async function pushSessions() {
