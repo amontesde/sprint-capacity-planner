@@ -921,6 +921,7 @@ function renderStories(planned) {
       <td class="py-2 px-3 text-center font-mono text-xs font-bold">${s.weight}</td>
       <td class="py-2 px-3 align-middle">
         <input type="number" min="0" step="0.5" value="${rawDev == null ? '' : rawDev}"
+          data-focus="dev-${oi}"
           onchange="updateStory(${oi},'dev',this.value)"
           onblur="updateStory(${oi},'dev',this.value)"
           class="w-20 bg-white border border-slate-300 rounded px-2 py-1 text-sm font-bold" />
@@ -928,6 +929,7 @@ function renderStories(planned) {
       </td>
       <td class="py-2 px-3 align-middle">
         <input type="number" min="0" step="0.5" value="${rawQa == null ? '' : rawQa}"
+          data-focus="qa-${oi}"
           onchange="updateStory(${oi},'qa',this.value)"
           onblur="updateStory(${oi},'qa',this.value)"
           class="w-20 bg-white border border-slate-300 rounded px-2 py-1 text-sm font-bold" />
@@ -991,9 +993,15 @@ function updateStory(i, key, value) {
     if (stories[i][key] === value) return;
     const prevId = stories[i].id;
     stories[i][key] = value;
-    if (key === 'id' && (stories[i].committed || stories[i].adelanto) && isJiraKey(value) && String(prevId) !== String(value)) {
-      stories[i].flagsDirty = true;
-      scheduleJiraFlagsSave(i);
+    if (key === 'id' && String(prevId) !== String(value)) {
+      const hadFlags = !!(stories[i].committed || stories[i].adelanto || stories[i].flagsDirty);
+      if (hadFlags && isJiraKey(prevId) && !JIRA_LOCAL_ONLY) {
+        voidClearJiraFlags(String(prevId).trim());
+      }
+      if ((stories[i].committed || stories[i].adelanto) && isJiraKey(value)) {
+        stories[i].flagsDirty = true;
+        scheduleJiraFlagsSave(i);
+      }
     }
   }
   recalc();
@@ -1005,8 +1013,15 @@ function addStory() {
 }
 
 function removeStory(i) {
+  const st = stories[i];
+  if (st && isJiraKey(st.id)) {
+    const k = String(st.id).trim();
+    pendingJiraFlags.delete(k);
+    pendingJiraHours.delete(k);
+  }
   stories.splice(i, 1);
   recalc();
+  if (activeSessionId) saveNow();
 }
 
 /* — Asignación y Timeline — */
@@ -1023,7 +1038,7 @@ function forcedIndex(s, key) {
 
 function resourceSelect(oi, key, current) {
   const list = key === 'forcedDev' ? devPeople : qaPeople;
-  let h = `<select onchange="updateStory(${oi},'${key}',this.value)" class="w-32 bg-white border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700">`;
+  let h = `<select data-focus="${key}-${oi}" onchange="updateStory(${oi},'${key}',this.value)" class="w-32 bg-white border border-slate-300 rounded px-2 py-1 text-xs font-bold text-slate-700">`;
   h += `<option value="auto"${current === 'auto' ? ' selected' : ''}>⚡ Auto</option>`;
   list.forEach((p, pi) => {
     h += `<option value="${pi}"${current === String(pi) ? ' selected' : ''}>${escapeAttr(p.name)}</option>`;
@@ -1271,16 +1286,24 @@ function recalc() {
   const utilQaOver = demandQa > c.commitQa;
   const pctDevEl = document.getElementById('utilDevPct');
   const pctQaEl = document.getElementById('utilQaPct');
-  pctDevEl.textContent = `${utilDev.toFixed(1)}%`;
-  pctQaEl.textContent = `${utilQa.toFixed(1)}%`;
-  pctDevEl.style.color = utilDevOver ? '#be123c' : '#0f172a';
-  pctQaEl.style.color = utilQaOver ? '#be123c' : '#0f172a';
+  if (pctDevEl) {
+    pctDevEl.textContent = `${utilDev.toFixed(1)}%`;
+    pctDevEl.style.color = utilDevOver ? '#be123c' : '#0f172a';
+  }
+  if (pctQaEl) {
+    pctQaEl.textContent = `${utilQa.toFixed(1)}%`;
+    pctQaEl.style.color = utilQaOver ? '#be123c' : '#0f172a';
+  }
   const barDevEl = document.getElementById('utilDevBar');
   const barQaEl = document.getElementById('utilQaBar');
-  barDevEl.style.width = `${Math.min(100, utilDev)}%`;
-  barQaEl.style.width = `${Math.min(100, utilQa)}%`;
-  barDevEl.style.background = utilDevOver ? '#e11d48' : '';
-  barQaEl.style.background = utilQaOver ? '#e11d48' : '';
+  if (barDevEl) {
+    barDevEl.style.width = `${Math.min(100, utilDev)}%`;
+    barDevEl.style.background = utilDevOver ? '#e11d48' : '';
+  }
+  if (barQaEl) {
+    barQaEl.style.width = `${Math.min(100, utilQa)}%`;
+    barQaEl.style.background = utilQaOver ? '#e11d48' : '';
+  }
 
   const demCommitDev = committedOnly.reduce((a, s) => a + (Number(s.dev) || 0), 0);
   const demCommitQa = committedOnly.reduce((a, s) => a + (Number(s.qa) || 0), 0);
@@ -1321,29 +1344,40 @@ function defaultPeople() {
   }
 }
 
-function loadPdfExample() {
-  stories = PDF_EXAMPLE.map(s => ({ ...s, committed: !!s.committed, adelanto: !!s.adelanto && !s.committed }));
-  defaultPeople();
+async function replaceStoriesSafe(nextStories, { resetPeople } = {}) {
+  if (stories.length && (stories.some(st => st.flagsDirty || st.devDirty || st.qaDirty) || pendingJiraFlags.size || pendingJiraHours.size)) {
+    if (!confirm('Hay cambios pendientes de sync a Jira. ¿Guardarlos y reemplazar las historias?')) return false;
+  }
+  await flushPendingJiraNow();
+  discardJiraPending();
+  stories = nextStories;
+  if (resetPeople) defaultPeople();
+  else if (!devPeople.length || !qaPeople.length) defaultPeople();
   recalc();
+  if (activeSessionId) saveNow();
+  return true;
 }
 
-function loadCarryOver() {
-  stories = BOARD_ACTUAL.filter(s => s.carryOver).map(s => ({ ...s, committed: false, adelanto: false }));
-  if (!devPeople.length || !qaPeople.length) defaultPeople();
+async function loadPdfExample() {
+  await replaceStoriesSafe(
+    PDF_EXAMPLE.map(s => ({ ...s, committed: !!s.committed, adelanto: !!s.adelanto && !s.committed })),
+    { resetPeople: true }
+  );
+}
+
+async function loadCarryOver() {
   document.getElementById('opsReservePct').value = '15';
   document.getElementById('ciReservePct').value = '15';
-  recalc();
+  await replaceStoriesSafe(BOARD_ACTUAL.filter(s => s.carryOver).map(s => ({ ...s, committed: false, adelanto: false })));
 }
 
 // const PROXY_BASE removido - usamos paths relativos
 const JIRA_SITE = 'https://team-crediviva.atlassian.net';
 
 async function loadBoardActual() {
-  stories = BOARD_ACTUAL.map(s => ({ ...s, committed: false, adelanto: false }));
-  if (!devPeople.length || !qaPeople.length) defaultPeople();
   document.getElementById('opsReservePct').value = '15';
   document.getElementById('ciReservePct').value = '15';
-  recalc();
+  await replaceStoriesSafe(BOARD_ACTUAL.map(s => ({ ...s, committed: false, adelanto: false })));
 }
 
 function loadSprint10() {
@@ -1413,7 +1447,9 @@ async function importStoriesFromJira() {
     if (activeSessionId) saveNow();
     const nC = stories.filter(x => x.committed).length;
     const nA = stories.filter(x => x.adelanto).length;
-    setSessionStatus(`Importadas ${list.length} · ${nC} comprometidas · ${nA} adelantos · ${label.trim()}`);
+    const keys = stories.map(x => String(x.id || '').trim()).filter(isJiraKey);
+    const dup = keys.length - new Set(keys).size;
+    setSessionStatus(`Importadas ${list.length} · ${nC} comprometidas · ${nA} adelantos · ${label.trim()}` + (dup ? ` · ⚠ ${dup} key(s) duplicado(s)` : ''));
   } catch (e) {
     if (/401|No autenticado|autentic/i.test(String(e.message||''))) showLoginOverlay(true);
     alert('Error al importar de Jira: ' + e.message);
@@ -1501,6 +1537,14 @@ function setStoryFlag(i, flag, checked) {
 
 let jiraFlagsTimer = null;
 const pendingJiraFlags = new Set();
+/** Keys Jira a los que hay que quitar labels aunque ya no estén en `stories` (p.ej. cambiaron el ID). */
+const pendingJiraFlagClears = new Set();
+
+function voidClearJiraFlags(key) {
+  if (!isJiraKey(key)) return;
+  pendingJiraFlagClears.add(String(key).trim());
+  scheduleJiraFlagsSaveFromPending();
+}
 
 function clearJiraPendingTimers() {
   if (jiraFlagsTimer) { clearTimeout(jiraFlagsTimer); jiraFlagsTimer = null; }
@@ -1516,10 +1560,11 @@ function requeueDirtyJira() {
 }
 
 async function flushPendingJiraNow() {
+  if (JIRA_LOCAL_ONLY) return;
   clearJiraPendingTimers();
   requeueDirtyJira();
   const tasks = [];
-  if (pendingJiraFlags.size) tasks.push(flushJiraFlagsSave());
+  if (pendingJiraFlags.size || pendingJiraFlagClears.size) tasks.push(flushJiraFlagsSave());
   if (pendingJiraHours.size) tasks.push(flushJiraHoursSave());
   if (tasks.length) await Promise.all(tasks);
 }
@@ -1527,10 +1572,12 @@ async function flushPendingJiraNow() {
 function discardJiraPending() {
   clearJiraPendingTimers();
   pendingJiraFlags.clear();
+  pendingJiraFlagClears.clear();
   pendingJiraHours.clear();
 }
 
 function retryJiraPending() {
+  JIRA_LOCAL_ONLY = false;
   requeueDirtyJira();
   flushPendingJiraNow();
 }
@@ -1539,12 +1586,14 @@ function scheduleJiraFlagsSave(i) {
   const s = stories[i];
   if (!s || !isJiraKey(s.id)) return;
   if (!s.flagsDirty) return;
+  if (JIRA_LOCAL_ONLY) return;
   pendingJiraFlags.add(String(s.id).trim());
   scheduleJiraFlagsSaveFromPending();
 }
 
 function scheduleJiraFlagsSaveFromPending() {
-  if (!pendingJiraFlags.size) return;
+  if (!pendingJiraFlags.size && !pendingJiraFlagClears.size) return;
+  if (JIRA_LOCAL_ONLY) return;
   if (jiraFlagsTimer) clearTimeout(jiraFlagsTimer);
   jiraFlagsTimer = setTimeout(flushJiraFlagsSave, 500);
 }
@@ -1554,9 +1603,14 @@ async function flushJiraFlagsSave() {
   jiraFlagsTimer = null;
   const ids = [...pendingJiraFlags];
   pendingJiraFlags.clear();
-  if (!ids.length) return;
+  const clears = [...pendingJiraFlagClears];
+  pendingJiraFlagClears.clear();
   const byId = new Map(stories.map(st => [String(st.id).trim(), st]));
   const payloads = [];
+  for (const id of clears) {
+    if (byId.has(id)) continue; // si sigue en el board, lo maneja flagsDirty
+    payloads.push({ key: id, committed: false, adelanto: false, _clear: true });
+  }
   for (const id of ids) {
     const s = byId.get(id);
     if (!s || !s.flagsDirty) continue;
@@ -1588,17 +1642,21 @@ async function flushJiraFlagsSave() {
       ok++;
     } catch (e) {
       console.error('[jira-flags] fallo al guardar', item.key, e.message);
-      if (!(e && /No autenticado/.test(String(e.message || e)))) pendingJiraFlags.add(item.key);
+      if (!(e && /No autenticado/.test(String(e.message || e)))) {
+        if (item._clear) pendingJiraFlagClears.add(item.key);
+        else pendingJiraFlags.add(item.key);
+      }
     }
   }
   setJiraSaveState(ok === payloads.length ? 'ok' : 'fail', { kind: 'flags', ok, fail: payloads.length - ok, total: payloads.length });
-  if (pendingJiraFlags.size) scheduleJiraFlagsSaveFromPending();
+  if (pendingJiraFlags.size || pendingJiraFlagClears.size) scheduleJiraFlagsSaveFromPending();
 }
 
 function scheduleJiraHoursSave(i) {
   const s = stories[i];
   if (!s || !isJiraKey(s.id)) return;
   if (!s.devDirty && !s.qaDirty) return; // sin cambios del usuario → no tocar el ticket
+  if (JIRA_LOCAL_ONLY) return;
   pendingJiraHours.add(String(s.id).trim());
   if (jiraHoursTimer) clearTimeout(jiraHoursTimer);
   jiraHoursTimer = setTimeout(flushJiraHoursSave, 800);
@@ -1691,6 +1749,7 @@ let activeSessionId = null;
 let sessionSuppress = false;
 let AUTH_USER = null;     // {accountId, displayName, email, cloudId} del usuario Atlassian
 let AUTH_MODE = 'local';  // 'authed' | 'required' (login bloqueante) | 'local' (proxy sin OAuth)
+let JIRA_LOCAL_ONLY = false; // true tras "Continuar sin Jira" — no reabrir overlay ni spamear sync
 let SHARED_META = null;   // itemUpdatedAt de la copia compartida en el servidor
 let sharedConflict = false;
 let sharedPushTimer = null;
@@ -1750,7 +1809,13 @@ function setSessionStatus(text) {
 }
 
 function saveSessionsList(list) {
-  localStorage.setItem(SESSIONS_KEY, JSON.stringify(list));
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(list));
+  } catch (e) {
+    console.error('[sessions] no se pudo guardar', e);
+    setSessionStatus('⚠ No se pudo guardar la sesión (storage lleno?)');
+    return;
+  }
   renderSessionSelect();
   schedulePush();
 }
@@ -1762,8 +1827,15 @@ function escapeHtml(s) {
 }
 
 function showLoginOverlay(on) {
-  const o = document.getElementById('loginOverlay');
-  if (o) o.classList.toggle('hidden', !on);
+  const el = document.getElementById('loginOverlay');
+  if (!el) return;
+  if (on) {
+    if (JIRA_LOCAL_ONLY) return; // eligió seguir sin Jira
+    el.classList.remove('hidden');
+  } else {
+    JIRA_LOCAL_ONLY = true;
+    el.classList.add('hidden');
+  }
 }
 
 function renderAuthBadge() {
@@ -1788,6 +1860,7 @@ async function authMe() {
     if (!u || !u.accountId) { AUTH_MODE = 'local'; AUTH_USER = null; renderAuthBadge(); return AUTH_MODE; }
     AUTH_USER = u;
     AUTH_MODE = 'authed';
+    JIRA_LOCAL_ONLY = false;
     renderAuthBadge();
     return AUTH_MODE;
   } catch (e) {
@@ -1984,14 +2057,14 @@ async function newSession() {
   setSessionStatus('Nueva sesión creada');
 }
 
-function deleteSession() {
+async function deleteSession() {
   if (getSessions().length <= 1) { alert('Debes conservar al menos una sesión.'); return; }
   if (!confirm('¿Eliminar la sesión actual? Esta acción no se puede deshacer.')) return;
   const list = getSessions().filter(s => s.id !== activeSessionId);
   saveSessionsList(list);
   const next = list[0];
   localStorage.setItem(ACTIVE_KEY, next.id);
-  switchSession(next.id);
+  await switchSession(next.id);
 }
 
 (async function boot() {
@@ -2009,7 +2082,7 @@ function deleteSession() {
     renderSessionSelect();
     setSessionStatus('Guardado ' + new Date(active.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
   } else {
-    loadBoardActual();
+    await loadBoardActual();
     activeSessionId = 's' + Date.now();
     const fresh = getSessions();
     fresh.push({ id: activeSessionId, title: 'Sprint 1', savedAt: new Date().toISOString(), data: collectSessionData() });
