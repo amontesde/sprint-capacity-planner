@@ -81,13 +81,13 @@
       </h2>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <label class="text-xs text-slate-600">Días hábiles del sprint
-          <input id="sprintWorkDays" type="number" min="1" step="0.5" value="10" oninput="recalc()" class="mt-1 w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold" />
+          <input id="sprintWorkDays" type="number" min="1" step="0.5" value="10" oninput="scheduleRecalc()" class="mt-1 w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold" />
         </label>
         <label class="text-xs text-slate-600">Horas / día laboral
-          <input id="hoursPerDay" type="number" min="1" step="0.5" value="8" oninput="recalc()" class="mt-1 w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold" />
+          <input id="hoursPerDay" type="number" min="1" step="0.5" value="8" oninput="scheduleRecalc()" class="mt-1 w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold" />
         </label>
         <label class="text-xs text-slate-600">Feriados (días, todo el equipo)
-          <input id="holidays" type="number" min="0" step="0.5" value="0" oninput="recalc()" class="mt-1 w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold" />
+          <input id="holidays" type="number" min="0" step="0.5" value="0" oninput="scheduleRecalc()" class="mt-1 w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold" />
         </label>
         <div class="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs flex flex-col justify-center">
           <span class="text-slate-500">Día base por persona</span>
@@ -153,19 +153,18 @@
       </h2>
       <div class="grid grid-cols-3 gap-3 mb-3">
         <label class="text-xs text-slate-600">Peso Alta
-          <input id="weightAlta" type="number" min="1" value="3" oninput="recalc()" class="mt-1 w-full bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-sm font-bold text-rose-800" />
+          <input id="weightAlta" type="number" min="1" value="3" oninput="scheduleRecalc()" class="mt-1 w-full bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-sm font-bold text-rose-800" />
         </label>
         <label class="text-xs text-slate-600">Peso Media
-          <input id="weightMedia" type="number" min="1" value="2" oninput="recalc()" class="mt-1 w-full bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-800" />
+          <input id="weightMedia" type="number" min="1" value="2" oninput="scheduleRecalc()" class="mt-1 w-full bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm font-bold text-amber-800" />
         </label>
         <label class="text-xs text-slate-600">Peso Baja
-          <input id="weightBaja" type="number" min="1" value="1" oninput="recalc()" class="mt-1 w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold text-slate-700" />
+          <input id="weightBaja" type="number" min="1" value="1" oninput="scheduleRecalc()" class="mt-1 w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-bold text-slate-700" />
         </label>
       </div>
       <p class="text-xs text-slate-500">
-        Se comprometen primero las de <strong>mayor peso</strong> (Alta → Media → Baja).
-        Si no alcanza capacidad, lo que queda fuera son las de menor importancia.
-        Dentro del mismo nivel, se respeta el orden de la lista.
+        El <strong>peso</strong> es informativo (prioridad). En v2 vos marcás Comprometida/Adelanto a mano;
+        el orden de la tabla es el del board/import. La capacidad se resta solo de las marcadas.
       </p>
     </section>
 
@@ -728,7 +727,7 @@ function updatePerson(role, i, key, value) {
     list[i].daysOff = next;
     list[i].hoursOverride = null;
   } else if (key === 'hoursOverride') {
-    const next = value === '' ? null : Number(value);
+    const next = value === '' ? null : (Number.isFinite(Number(value)) ? Number(value) : null);
     if (list[i].hoursOverride === next) return;
     list[i].hoursOverride = next;
   } else {
@@ -1129,7 +1128,7 @@ function renderCommittedList() {
   const input = document.getElementById('committedFilter');
   const q = (input ? input.value : '').toLowerCase().trim();
   const matches = !q ? committedStoriesCache : committedStoriesCache.filter(s =>
-    s.id.toLowerCase().includes(q) || s.title.toLowerCase().includes(q));
+    String(s.id || '').toLowerCase().includes(q) || String(s.title || '').toLowerCase().includes(q));
   const countEl = document.getElementById('committedCount');
   const ul = document.getElementById('committedListItems');
   if (countEl) countEl.textContent = `${committedStoriesCache.length}`;
@@ -1180,7 +1179,7 @@ function renderOutList() {
   const input = document.getElementById('outFilter');
   const q = (input ? input.value : '').toLowerCase().trim();
   const matches = !q ? outStoriesCache : outStoriesCache.filter(s =>
-    s.id.toLowerCase().includes(q) || s.title.toLowerCase().includes(q));
+    String(s.id || '').toLowerCase().includes(q) || String(s.title || '').toLowerCase().includes(q));
   const countEl = document.getElementById('outCount');
   const ul = document.getElementById('outListItems');
   if (countEl) countEl.textContent = `${outStoriesCache.length}`;
@@ -1199,6 +1198,11 @@ function renderOutList() {
       <span class="flex-1 min-w-0 truncate text-xs text-slate-600" title="${escapeAttr(s.title)}">${escapeAttr(s.title)}</span>
       <span class="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded shrink-0 ${priorityClass(s.priority)}">${priorityLabel(s.priority)}</span>
     </li>`).join('');
+}
+
+function scheduleRecalc() {
+  clearTimeout(scheduleRecalc._t);
+  scheduleRecalc._t = setTimeout(() => recalc(), 120);
 }
 
 function recalc() {
@@ -1379,6 +1383,7 @@ async function importStoriesFromJira() {
   const labelEl = sel.selectedOptions && sel.selectedOptions[0];
   const label = labelEl ? labelEl.textContent : val;
   if (stories.length && !confirm(`Esto reemplaza las ${stories.length} historia(s) actuales por las historias abiertas de ${label.trim()}. ¿Continuar?`)) return;
+  await flushPendingJiraNow();
   importJiraInFlight = true;
   const btn = document.querySelector('button[onclick="importStoriesFromJira()"]');
   if (btn) { btn.disabled = true; btn.classList.add('opacity-60'); }
@@ -1388,6 +1393,7 @@ async function importStoriesFromJira() {
     const list = await res.json();
     if (!Array.isArray(list) || !list.length) { alert('No hay historias abiertas en ' + label.trim() + '.'); return; }
     if (!devPeople.length || !qaPeople.length) defaultPeople();
+    discardJiraPending();
     stories = list.map(s => {
       const row = {
         ...s,
@@ -1440,8 +1446,9 @@ function setJiraSaveState(state, detail) {
       : (kind === 'flags' ? 'Labels guardados en Jira' : 'Horas guardadas en Jira'));
     setJiraSaveState._t = setTimeout(() => { el.textContent = ''; }, 3000);
   } else if (state === 'fail') {
-    el.textContent = '⚠ ' + (detail ? detail.fail + ' de ' + detail.total : '') + ' no se pudieron guardar en Jira (' + label + ')';
-    setJiraSaveState._t = setTimeout(() => { el.textContent = ''; }, 6000);
+    el.innerHTML = '⚠ ' + (detail ? detail.fail + ' de ' + detail.total : '') + ' no se pudieron guardar (' + label + ') · '
+      + '<button type="button" onclick="retryJiraPending()" class="underline text-indigo-600 hover:text-indigo-800">Reintentar</button>';
+    setJiraSaveState._t = setTimeout(() => { el.textContent = ''; }, 10000);
   } else {
     el.textContent = '';
   }
@@ -1494,6 +1501,39 @@ function setStoryFlag(i, flag, checked) {
 
 let jiraFlagsTimer = null;
 const pendingJiraFlags = new Set();
+
+function clearJiraPendingTimers() {
+  if (jiraFlagsTimer) { clearTimeout(jiraFlagsTimer); jiraFlagsTimer = null; }
+  if (jiraHoursTimer) { clearTimeout(jiraHoursTimer); jiraHoursTimer = null; }
+}
+
+function requeueDirtyJira() {
+  stories.forEach(st => {
+    if (!isJiraKey(st.id)) return;
+    if (st.flagsDirty) pendingJiraFlags.add(String(st.id).trim());
+    if (st.devDirty || st.qaDirty) pendingJiraHours.add(String(st.id).trim());
+  });
+}
+
+async function flushPendingJiraNow() {
+  clearJiraPendingTimers();
+  requeueDirtyJira();
+  const tasks = [];
+  if (pendingJiraFlags.size) tasks.push(flushJiraFlagsSave());
+  if (pendingJiraHours.size) tasks.push(flushJiraHoursSave());
+  if (tasks.length) await Promise.all(tasks);
+}
+
+function discardJiraPending() {
+  clearJiraPendingTimers();
+  pendingJiraFlags.clear();
+  pendingJiraHours.clear();
+}
+
+function retryJiraPending() {
+  requeueDirtyJira();
+  flushPendingJiraNow();
+}
 
 function scheduleJiraFlagsSave(i) {
   const s = stories[i];
@@ -1697,6 +1737,7 @@ function collectSessionData() {
       id: s.id, title: s.title, priority: s.priority || 'media',
       status: s.status || null, carryOver: !!s.carryOver,
       committed: !!s.committed, adelanto: !!s.adelanto,
+      assignee: s.assignee || '', assigneeAccountId: s.assigneeAccountId || '',
       dev: s.dev == null ? null : Number(s.dev), qa: s.qa == null ? null : Number(s.qa),
       forcedDev: s.forcedDev || 'auto', forcedQa: s.forcedQa || 'auto',
     })),
@@ -1898,6 +1939,7 @@ function applySessionData(data, title) {
   stories = (data.stories || []).map(s => ({
     id: s.id, title: s.title, priority: s.priority || 'media', status: s.status || null, carryOver: !!s.carryOver,
     committed: !!s.committed, adelanto: !!s.adelanto && !s.committed,
+    assignee: s.assignee || '', assigneeAccountId: s.assigneeAccountId || '',
     dev: s.dev == null ? null : Number(s.dev), qa: s.qa == null ? null : Number(s.qa), forcedDev: s.forcedDev || 'auto', forcedQa: s.forcedQa || 'auto',
   }));
   if (!devPeople.length) defaultPeople();
@@ -1906,11 +1948,13 @@ function applySessionData(data, title) {
   recalc();
 }
 
-function switchSession(id) {
+async function switchSession(id) {
+  await flushPendingJiraNow();
   saveNow();
   const list = getSessions();
   const s = list.find(x => x.id === id);
   if (!s) return;
+  discardJiraPending();
   activeSessionId = id;
   localStorage.setItem(ACTIVE_KEY, id);
   sessionSuppress = true;
@@ -1920,11 +1964,13 @@ function switchSession(id) {
   setSessionStatus('Guardado ' + new Date(s.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
 }
 
-function newSession() {
+async function newSession() {
+  await flushPendingJiraNow();
   saveNow();
   const id = 's' + Date.now();
   const list = getSessions();
   const title = 'Sprint ' + (list.length + 1);
+  discardJiraPending();
   defaultPeople();
   stories = [];
   recalc();
@@ -1977,6 +2023,9 @@ function deleteSession() {
     if (!dirty) return;
     ev.preventDefault();
     ev.returnValue = '';
+  });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) flushPendingJiraNow();
   });
   // v2: auth primero (sprints/Jira necesitan cookie). Sesiones solo locales (scp_v2_*),
   // no compartidas con v1 — si no, v1 pisa committed/adelanto al guardar.
