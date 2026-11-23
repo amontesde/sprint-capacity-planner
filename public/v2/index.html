@@ -225,6 +225,9 @@
           <button onclick="markCarryOverCommitted()" class="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-3 py-1.5 rounded font-medium" title="Marca como Comprometida todas las WIP/carry-over">
             <i class="fa-solid fa-check-double mr-1"></i> WIP → Comprometidas
           </button>
+          <button onclick="clearAllFlags()" class="bg-slate-700 hover:bg-slate-600 text-slate-100 text-xs px-3 py-1.5 rounded font-medium border border-slate-600" title="Quita Comprometida/Adelanto de todas (y sync Jira)">
+            <i class="fa-solid fa-eraser mr-1"></i> Limpiar marcas
+          </button>
           <button onclick="addStory()" class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs px-3 py-1.5 rounded font-medium">
             <i class="fa-solid fa-plus mr-1"></i> Añadir historia
           </button>
@@ -817,28 +820,65 @@ function closeTeamModal() {
   document.getElementById('teamModal').classList.add('hidden');
 }
 
+function rebindForcedToTeam(prevDev, prevQa) {
+  const find = (prevList, nextList, forced) => {
+    if (forced === undefined || forced === null || forced === 'auto' || forced === '') return 'auto';
+    const idx = Number(forced);
+    const prev = Number.isInteger(idx) ? prevList[idx] : null;
+    if (!prev) return 'auto';
+    let ni = nextList.findIndex(p => prev.accountId && p.accountId === prev.accountId);
+    if (ni < 0) ni = nextList.findIndex(p => p.name === prev.name);
+    return ni >= 0 ? String(ni) : 'auto';
+  };
+  stories.forEach(st => {
+    st.forcedDev = find(prevDev, devPeople, st.forcedDev);
+    st.forcedQa = find(prevQa, qaPeople, st.forcedQa);
+  });
+}
+
 function applyTeamModal() {
   const toPeople = checksId => [...document.querySelectorAll(`#${checksId} input:checked`)].map(cb => {
     const m = (jiraMembersCache || []).find(x => x.accountId === cb.value) || {};
     return { name: m.displayName || cb.dataset.name, accountId: m.accountId || null, daysOff: 0, hoursOverride: null };
   });
+  const prevDev = devPeople.slice();
+  const prevQa = qaPeople.slice();
   devPeople = toPeople('teamDevChecks');
   qaPeople = toPeople('teamQaChecks');
   if (!devPeople.length && !qaPeople.length) {
     alert('Selecciona al menos un Dev o un QA.');
     return;
   }
+  rebindForcedToTeam(prevDev, prevQa);
   closeTeamModal();
   recalc();
   alert(`Equipo aplicado: ${devPeople.length} Devs · ${qaPeople.length} QAs`);
 }
 
+function remapForcedAfterRemove(role, removedIdx) {
+  const key = role === 'dev' ? 'forcedDev' : 'forcedQa';
+  stories.forEach(st => {
+    const v = st[key];
+    if (v === undefined || v === null || v === 'auto' || v === '') return;
+    const idx = Number(v);
+    if (!Number.isInteger(idx)) { st[key] = 'auto'; return; }
+    if (idx === removedIdx) st[key] = 'auto';
+    else if (idx > removedIdx) st[key] = String(idx - 1);
+  });
+}
+
 function removePerson(role, i) {
   (role === 'dev' ? devPeople : qaPeople).splice(i, 1);
+  remapForcedAfterRemove(role, i);
   recalc();
 }
 
 function renderStories(planned) {
+  const scroller = document.getElementById('storiesScroll');
+  const prevScrollTop = scroller ? scroller.scrollTop : 0;
+  const prevScrollLeft = scroller ? scroller.scrollLeft : 0;
+  const ae = document.activeElement;
+  const focusKey = ae && ae.getAttribute && ae.getAttribute('data-focus') || null;
   document.getElementById('storiesBody').innerHTML = planned.map((s) => {
     const oi = s.originalIndex;
     const src = stories[oi] || s;
@@ -888,7 +928,7 @@ function renderStories(planned) {
       <td class="py-2 px-3 text-center align-middle">
         <label class="inline-flex flex-col items-center gap-1 cursor-pointer">
           <input type="checkbox" ${s.committed ? 'checked' : ''} onchange="setStoryFlag(${oi},'committed',this.checked)"
-            aria-label="Comprometida ${escapeAttr(s.id)}"
+            data-focus="c-${oi}" aria-label="Comprometida ${escapeAttr(s.id)}"
             class="w-4 h-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500" />
           <span class="text-[10px] font-medium ${s.committed ? 'text-emerald-700' : 'text-slate-400'}">${s.committed ? 'Sí' : '—'}</span>
         </label>
@@ -896,7 +936,7 @@ function renderStories(planned) {
       <td class="py-2 px-3 text-center align-middle">
         <label class="inline-flex flex-col items-center gap-1 cursor-pointer">
           <input type="checkbox" ${s.adelanto ? 'checked' : ''} onchange="setStoryFlag(${oi},'adelanto',this.checked)"
-            aria-label="Adelanto ${escapeAttr(s.id)}"
+            data-focus="a-${oi}" aria-label="Adelanto ${escapeAttr(s.id)}"
             class="w-4 h-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500" />
           <span class="text-[10px] font-medium ${s.adelanto ? 'text-amber-700' : 'text-slate-400'}">${s.adelanto ? 'Sí' : '—'}</span>
         </label>
@@ -909,6 +949,14 @@ function renderStories(planned) {
       </td>
     </tr>`;
   }).join('');
+  if (scroller) {
+    scroller.scrollTop = prevScrollTop;
+    scroller.scrollLeft = prevScrollLeft;
+  }
+  if (focusKey) {
+    const el = document.querySelector(`[data-focus="${CSS.escape(focusKey)}"]`);
+    if (el) el.focus({ preventScroll: true });
+  }
 }
 
 function updateStory(i, key, value) {
@@ -1328,12 +1376,22 @@ async function importStoriesFromJira() {
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
     const list = await res.json();
     if (!Array.isArray(list) || !list.length) { alert('No hay historias abiertas en ' + label.trim() + '.'); return; }
-    stories = list.map(s => ({
-      ...s,
-      committed: !!s.committed,
-      adelanto: !!s.adelanto && !s.committed,
-    }));
     if (!devPeople.length || !qaPeople.length) defaultPeople();
+    stories = list.map(s => {
+      const row = {
+        ...s,
+        committed: !!s.committed,
+        adelanto: !!s.adelanto && !s.committed,
+        forcedDev: s.forcedDev || 'auto',
+        forcedQa: s.forcedQa || 'auto',
+      };
+      if (row.assignee && (!row.forcedDev || row.forcedDev === 'auto') && devPeople.length) {
+        let di = devPeople.findIndex(p => p.accountId && s.assigneeAccountId && p.accountId === s.assigneeAccountId);
+        if (di < 0) di = devPeople.findIndex(p => p.name === s.assignee);
+        if (di >= 0) row.forcedDev = String(di);
+      }
+      return row;
+    });
     recalc();
     if (activeSessionId) saveNow();
     const nC = stories.filter(x => x.committed).length;
@@ -1385,6 +1443,20 @@ function markCarryOverCommitted() {
   if (!confirm(`Marcar ${idxs.length} WIP como Comprometida(s) y sincronizar a Jira?`)) return;
   idxs.forEach(i => {
     stories[i].committed = true;
+    stories[i].adelanto = false;
+    stories[i].flagsDirty = true;
+    scheduleJiraFlagsSave(i);
+  });
+  recalc();
+  if (activeSessionId) saveNow();
+}
+
+function clearAllFlags() {
+  const idxs = stories.map((s, i) => i).filter(i => stories[i].committed || stories[i].adelanto);
+  if (!idxs.length) { alert('No hay historias marcadas.'); return; }
+  if (!confirm(`Quitar Comprometida/Adelanto de ${idxs.length} historia(s) y sincronizar a Jira?`)) return;
+  idxs.forEach(i => {
+    stories[i].committed = false;
     stories[i].adelanto = false;
     stories[i].flagsDirty = true;
     scheduleJiraFlagsSave(i);
@@ -1465,6 +1537,7 @@ async function flushJiraFlagsSave() {
       ok++;
     } catch (e) {
       console.error('[jira-flags] fallo al guardar', item.key, e.message);
+      if (!(e && /No autenticado/.test(String(e.message || e)))) pendingJiraFlags.add(item.key);
     }
   }
   setJiraSaveState(ok === payloads.length ? 'ok' : 'fail', { kind: 'flags', ok, fail: payloads.length - ok, total: payloads.length });
@@ -1525,12 +1598,13 @@ async function flushJiraHoursSave() {
       ok++;
     } catch (e) {
       console.error('[jira-hours] fallo al guardar', item.key, e.message);
+      if (!(e && /No autenticado/.test(String(e.message || e)))) pendingJiraHours.add(item.key);
     }
   }
   setJiraSaveState(ok === payloads.length ? 'ok' : 'fail', { kind: 'hours', ok, fail: payloads.length - ok, total: payloads.length });
   if (pendingJiraHours.size) {
     if (jiraHoursTimer) clearTimeout(jiraHoursTimer);
-    jiraHoursTimer = setTimeout(flushJiraHoursSave, 500);
+    jiraHoursTimer = setTimeout(flushJiraHoursSave, 1200);
   }
 }
 
